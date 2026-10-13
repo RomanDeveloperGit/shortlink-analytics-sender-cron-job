@@ -1,0 +1,95 @@
+# Taskfile for starting cmds on local machine
+
+version: '3'
+
+vars:
+  GO_VERSION: '1.26.4'
+  GOLANGCI_LINT_VERSION: 'v2.13.2'
+  GCI_VERSION: 'v0.14.0'
+  GOFUMPT_VERSION: 'v0.12.0'
+  GOLINES_VERSION: 'v0.15.0'
+  AIR_VERSION: 'v1.67.4'
+
+  BIN_DIR: '{{.ROOT_DIR}}/bin'
+  GOLANGCI_LINT: '{{.BIN_DIR}}/golangci-lint'
+  GCI: '{{.BIN_DIR}}/gci'
+  GOFUMPT: '{{.BIN_DIR}}/gofumpt'
+  GOLINES: '{{.BIN_DIR}}/golines'
+  AIR: '{{.BIN_DIR}}/air'
+
+  TEMP_DIR: 'tmp'
+  TEMP_ENV_FILE: '{{.TEMP_DIR}}/.env.local'
+
+tasks:
+  bin:
+    desc: Create bin directory
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+    status:
+      - test -d {{.BIN_DIR}}
+  install:
+    desc: Install tools
+    deps: [bin]
+    env:
+      GOBIN: '{{.BIN_DIR}}'
+    cmds:
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+      - go install github.com/daixiang0/gci@{{.GCI_VERSION}}
+      - go install mvdan.cc/gofumpt@{{.GOFUMPT_VERSION}}
+      - go install github.com/golangci/golines@{{.GOLINES_VERSION}}
+      - go install github.com/air-verse/air@{{.AIR_VERSION}}
+    status:
+      - test -x {{.GOLANGCI_LINT}}
+      - test -x {{.GCI}}
+      - test -x {{.GOFUMPT}}
+      - test -x {{.GOLINES}}
+      - test -x {{.AIR}}
+  lint:
+    desc: Run golangci-lint
+    deps: [install]
+    cmds:
+      - '{{.GOLANGCI_LINT}} run ./... --config={{.ROOT_DIR}}/.golangci.yml'
+  format:
+    desc: Run formatters
+    deps: [install]
+    cmds:
+      - find . -type f -name '*.go' ! -path '*/mocks/*' -exec {{.GOFUMPT}} -extra -w {} +
+      - find . -type f -name '*.go' ! -path '*/mocks/*' -exec {{.GCI}} write -s standard -s default -s "prefix(github.com/RomanDeveloperGit/shortlink-analytics-sender-cron-job/)" {} +
+      - find . -type f -name '*.go' ! -path '*/mocks/*' -exec {{.GOLINES}} -w {} +
+  prepare-env-for-start:
+    desc: Prepare env for start
+    cmds:
+      - mkdir -p {{.TEMP_DIR}}
+      - |
+        cat > {{.TEMP_ENV_FILE}} <<EOF
+        ENV=local
+        SERVICE_NAME=shortlink-analytics-sender-cron-job
+        SERVICE_VERSION=0.0.0
+        CRON_SCHEDULE=*/1 * * * * # для локалки
+        CRON_ZONE=Europe/Moscow
+        ANALYTICS_API_HOST=localhost
+        ANALYTICS_API_PORT=50051
+        ANALYTICS_API_KEEP_ALIVE_TIME=10s
+        ANALYTICS_API_CONNECT_TIMEOUT=10s
+        SMTP_HOST=localhost
+        SMTP_PORT=1025
+        SMTP_SENDER=shortlink-analytics-sender@localhost.ru
+        EOF
+  start:local:
+    desc: Run server with AIR
+    deps: [install]
+    dotenv:
+      - '{{.TEMP_ENV_FILE}}'
+    cmds:
+      - task prepare-env-for-start
+      - '{{.AIR}} --build.cmd "go build -o bin/cronjob cmd/cronjob/main.go" --build.entrypoint "./bin/cronjob"'
+  start:int:
+    desc: Run server like integration stand
+    deps: [install]
+    dotenv:
+      - '{{.TEMP_ENV_FILE}}'
+    env:
+      ENV: int
+    cmds:
+      - task prepare-env-for-start
+      - go run ./cmd/cronjob/main.go
